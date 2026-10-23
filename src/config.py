@@ -16,6 +16,7 @@ from secure_store import (
 
 ALLOWED_BROWSERS = ("edge", "chrome", "brave")
 ALLOWED_WINDOW_MODES = ("fullscreen", "maximized")
+ALLOWED_OPEN_AS = ("window", "tab")
 DEFAULT_OPEN_DELAY_SECONDS = 0.4
 MAX_OPEN_DELAY_SECONDS = 120.0
 
@@ -26,6 +27,8 @@ class ScreenConfig:
     url: str = ""
     monitor: int = 0
     window_mode: str = "fullscreen"
+    open_as: str = "window"
+    enabled: bool = True
 
 
 def _default_screens() -> list[ScreenConfig]:
@@ -55,8 +58,11 @@ class AppConfig:
         if not self.screens:
             errors.append("Add at least one screen.")
             return errors
+        if not any(screen.enabled for screen in self.screens):
+            errors.append("Turn on at least one screen.")
 
         seen_names: set[str] = set()
+        monitors_with_window: set[int] = set()
         for index, screen in enumerate(self.screens, start=1):
             label = screen.name.strip() or f"Screen {index}"
             if not screen.name.strip():
@@ -72,6 +78,17 @@ class AppConfig:
                 errors.append(f"{label}: monitor must be 0 or greater.")
             if screen.window_mode not in ALLOWED_WINDOW_MODES:
                 errors.append(f"{label}: window mode must be Fullscreen or Maximized.")
+            if not screen.enabled:
+                continue
+            open_as = screen.open_as if screen.open_as in ALLOWED_OPEN_AS else "window"
+            if open_as == "tab":
+                if screen.monitor not in monitors_with_window:
+                    errors.append(
+                        f"{label}: Open as Tab needs a Window on the same monitor "
+                        "above it in the list (and turned on)."
+                    )
+            else:
+                monitors_with_window.add(screen.monitor)
         return errors
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +102,8 @@ class AppConfig:
                     "url": screen.url.strip(),
                     "monitor": int(screen.monitor),
                     "window_mode": screen.window_mode,
+                    "open_as": screen.open_as if screen.open_as in ALLOWED_OPEN_AS else "window",
+                    "enabled": bool(screen.enabled),
                 }
                 for screen in self.screens
             ],
@@ -98,6 +117,13 @@ def _normalize_window_mode(raw: Any, fallback: str = "fullscreen") -> str:
     if mode in ALLOWED_WINDOW_MODES:
         return mode
     return fallback if fallback in ALLOWED_WINDOW_MODES else "fullscreen"
+
+
+def _normalize_open_as(raw: Any, fallback: str = "window") -> str:
+    mode = str(raw or fallback).strip().lower()
+    if mode in ALLOWED_OPEN_AS:
+        return mode
+    return fallback if fallback in ALLOWED_OPEN_AS else "window"
 
 
 def _legacy_global_window_mode(data: dict[str, Any]) -> str:
@@ -122,6 +148,8 @@ def _screen_from_data(
             url=fb.url,
             monitor=fb.monitor,
             window_mode=fb.window_mode or default_window_mode,
+            open_as=fb.open_as or "window",
+            enabled=fb.enabled,
         )
     name = data.get("name", fb.name)
     url = data.get("url", fb.url)
@@ -134,11 +162,18 @@ def _screen_from_data(
         window_raw = data.get("window_mode")
     else:
         window_raw = default_window_mode
+    open_as_raw = data.get("open_as", fb.open_as or "window")
+    if "enabled" in data:
+        enabled = bool(data.get("enabled"))
+    else:
+        enabled = fb.enabled
     return ScreenConfig(
         name=str(name or ""),
         url=str(url or ""),
         monitor=monitor_i,
         window_mode=_normalize_window_mode(window_raw, default_window_mode),
+        open_as=_normalize_open_as(open_as_raw, "window"),
+        enabled=enabled,
     )
 
 

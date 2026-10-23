@@ -2,8 +2,8 @@
 
 Two small Python apps for multi-monitor POS screens:
 
-1. **Config** (`browser-tool-config`) — add any number of named screens (name, URL, monitor, window mode), choose Edge / Chrome / Brave, and whether to open when the computer starts.
-2. **Launcher** (`browser-tool`) — opens every screen from config. No settings UI.
+1. **Config** (`browser-tool-config`) — add any number of named screens (name, URL, monitor, window mode, open as window or tab, on/off), choose Edge / Chrome / Brave, and whether to open when the computer starts.
+2. **Launcher** (`browser-tool`) — opens every enabled screen from config. No settings UI.
 
 They share `config.json` in the install folder (next to the binaries). Saves write an **encrypted** envelope; the decryption key lives in the OS credential store (Windows Credential Manager, or Linux Secret Service such as gnome-keyring / libsecret). If no secret service is available on Linux, the key is stored as a `0600` file at `~/.local/share/POSBrowserLauncher/profiles/config.key`. `config.example.json` stays plaintext for documentation. Plaintext `config.json` from older versions still loads; the next Save from Config upgrades it to encrypted.
 
@@ -95,10 +95,11 @@ On Windows, create a venv the same way (`py -3.12 -m venv .venv` then `.venv\Scr
   - Linux (XDG): `~/.config/autostart/browser-tool.desktop`
   - Omarchy / Hyprland: also a managed block in `~/.config/hypr/autostart.lua` (runs at compositor start)
   - Windows: a `.lnk` in the user Startup folder
-- **Save & Test Open** saves, then opens every configured screen.
-- **Screens** in `config.json` are a list of `{ "name", "url", "monitor", "window_mode" }`. Use **Add screen** in Config to grow the list; each screen needs a unique name. List order is the open queue (top opens first); use **↑** / **↓** in Config to change when each screen opens.
+- **Save & Test Open** saves, then opens every screen that is turned **On**.
+- **Screens** in `config.json` are a list of `{ "name", "url", "monitor", "window_mode", "open_as", "enabled" }`. Use **Add screen** in Config to grow the list; each screen needs a unique name. Uncheck **On** to keep a screen saved but skip it when opening (missing `enabled` in older configs is treated as on). List order is the open queue (top opens first); use **↑** / **↓** in Config to change when each screen opens.
 - **Delay between screens** (`open_delay_seconds` in config) waits that many seconds after each screen before opening the next (default `0.4`). Set to `0` for no extra wait.
-- **Window** is per screen (dropdown in Config). *Fullscreen* is kiosk (no title bar). *Maximized* fills the screen but keeps close and minimize. New screens default to fullscreen.
+- **Window** is per screen (dropdown in Config). *Fullscreen* is kiosk (no title bar). *Maximized* fills the screen but keeps close and minimize. New screens default to fullscreen. Ignored when **Open as** is *tab* (the parent window already has its mode).
+- **Open as** is per screen: *window* (default) opens a new browser window on the chosen monitor — you can put several windows on the same monitor. *tab* opens the URL as a new tab in the latest prior *window* on that same monitor (by list order). A *tab* row needs an **On** *window* on the same monitor above it; otherwise Save / launch reports an error. Missing `open_as` in older configs is treated as *window*.
 - All screens share one browser profile (`…/POSBrowserLauncher/profiles/shared` on Linux under `~/.local/share`, or under `%LOCALAPPDATA%` on Windows) so login and localStorage for the same site are available on every window. Older per-screen profile folders are migrated into `shared` on first launch.
 - **Logs** (startup, launch by screen name, save/decrypt failures) go to one file per day named `YYYYDDMM.log` (year, day, month — e.g. `20262210.log` for 2026-10-22) under `log/` next to the binaries (install folder or project root in development). Secrets (decryption keys, ciphertext) and URLs/monitor details are not written. Error dialogs point at today’s log when something fails at login.
 - **Update** (Config, packaged installs only) checks the latest GitLab Release for `GITLAB_PROJECT`, downloads the platform archive, replaces only the binaries (and Linux `icon.png` if present), and restarts Config. `config.json`, `log/`, and browser profiles are left alone.

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from app_log import get_logger
-from config import AppConfig
+from config import ALLOWED_OPEN_AS, AppConfig
 from monitors import Monitor, list_monitors, require_monitor
 from paths import profiles_dir, shared_profile_dir
 
@@ -196,7 +196,7 @@ def _use_hyprland() -> bool:
     return hyprland.available()
 
 
-def _launch_args(
+def _window_launch_args(
     binary: Path,
     url: str,
     profile: Path,
@@ -243,16 +243,65 @@ def _launch_args(
     return args
 
 
+def _tab_launch_args(binary: Path, url: str, profile: Path) -> list[str]:
+    """Open URL as a tab in an existing window of the shared profile."""
+    profile.mkdir(parents=True, exist_ok=True)
+    args = [
+        str(binary),
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-session-crashed-bubble",
+        "--hide-crash-restore-bubble",
+        "--disable-infobars",
+        "--disable-features=Translate,TranslateUI",
+    ]
+    if sys.platform.startswith("linux") and _is_wayland():
+        args.extend(["--ozone-platform=wayland", "--ozone-platform-hint=wayland"])
+    args.append(url)
+    return args
+
+
+# Back-compat alias used by any external callers of the old name.
+_launch_args = _window_launch_args
+
+
 def launch_role(
-    cfg: AppConfig, role: str, url: str, monitor_index: int, window_mode: str
-) -> subprocess.Popen:
+    cfg: AppConfig,
+    role: str,
+    url: str,
+    monitor_index: int,
+    window_mode: str,
+    *,
+    open_as: str = "window",
+    parent_address: str | None = None,
+) -> tuple[subprocess.Popen, str | None]:
+    """Launch a screen as a new window or a tab.
+
+    Returns (process, hyprland_address_or_none). For windows, address is the
+    new client when Hyprland placed it; for tabs, the parent address is returned.
+    """
     log = get_logger()
     monitors = list_monitors()
     monitor = require_monitor(monitors, monitor_index, role)
     binary = find_browser(cfg.browser)
     profile = ensure_shared_profile()
     hypr = _use_hyprland()
-    log.info("Launching screen %s (shared profile)", role)
+    mode = open_as if open_as in ALLOWED_OPEN_AS else "window"
+
+    if mode == "tab":
+        log.info("Launching screen %s as tab (shared profile)", role)
+        if hypr and parent_address:
+            import hyprland
+
+            hyprland.focus_window(parent_address)
+            time.sleep(0.15)
+        args = _tab_launch_args(binary, url, profile)
+        proc = subprocess.Popen(args, close_fds=True)
+        log.info("Opened tab %s (pid=%s parent=%s)", role, proc.pid, parent_address or "?")
+        return proc, parent_address
+
+    log.info("Launching screen %s as window (shared profile)", role)
     before_addresses: set[str] = set()
     if hypr and monitor.name:
         import hyprland
@@ -260,8 +309,9 @@ def launch_role(
         before_addresses = hyprland.client_addresses()
         hyprland.focus_monitor(monitor.name)
         time.sleep(0.15)
-    args = _launch_args(binary, url, profile, role, monitor, window_mode, hypr)
+    args = _window_launch_args(binary, url, profile, role, monitor, window_mode, hypr)
     proc = subprocess.Popen(args, close_fds=True)
+    address: str | None = None
     if hypr and monitor.name:
         import hyprland
 
@@ -281,11 +331,11 @@ def launch_role(
         time.sleep(0.1)
         hyprland.place_window(client, monitor.name, window_mode)
         window_pid = int(client.get("pid") or proc.pid)
-        address = str(client.get("address") or "")
+        address = str(client.get("address") or "") or None
         log.info("Placed %s (pid=%s address=%s)", role, window_pid, address or "?")
     else:
         log.info("Started %s (pid=%s)", role, proc.pid)
-    return proc
+    return proc, address
 
 
 def launch_screens(cfg: AppConfig) -> None:
@@ -294,21 +344,24 @@ def launch_screens(cfg: AppConfig) -> None:
     if errors:
         raise RuntimeError("\n".join(errors))
     binary = find_browser(cfg.browser)
+    screens = [screen for screen in cfg.screens if screen.enabled]
     names = ", ".join(
         (screen.name.strip() or f"screen-{index}")
-        for index, screen in enumerate(cfg.screens, start=1)
+        for index, screen in enumerate(screens, start=1)
     )
     delay = max(0.0, float(cfg.open_delay_seconds))
     log.info(
         "Launching %d screen(s) (%s) with %s (%s); delay between screens=%.2fs",
-        len(cfg.screens),
+        len(screens),
         names or "none",
         cfg.browser,
         binary,
         delay,
     )
     used_roles: set[str] = set()
-    for index, screen in enumerate(cfg.screens):
+    # monitor_index -> Hyprland address of the latest window on that monitor
+    parent_by_monitor: dict[int, str | None] = {}
+    for index, screen in enumerate(screens):
         if index and delay:
             time.sleep(delay)
         role = _sanitize_role(screen.name)
@@ -318,13 +371,25 @@ def launch_screens(cfg: AppConfig) -> None:
             role = f"{base}-{suffix}"
             suffix += 1
         used_roles.add(role)
-        launch_role(
+        open_as = screen.open_as if screen.open_as in ALLOWED_OPEN_AS else "window"
+        parent = parent_by_monitor.get(screen.monitor)
+        if open_as == "tab" and screen.monitor not in parent_by_monitor:
+            label = screen.name.strip() or role
+            raise RuntimeError(
+                f"{label}: Open as Tab needs a Window on the same monitor "
+                "above it in the list (and turned on)."
+            )
+        _proc, address = launch_role(
             cfg,
             role,
             screen.url.strip(),
             screen.monitor,
             screen.window_mode,
+            open_as=open_as,
+            parent_address=parent,
         )
+        if open_as == "window":
+            parent_by_monitor[screen.monitor] = address
     log.info("All screens launched")
 
 

@@ -7,13 +7,17 @@
       "name": "cashier",
       "url": "https://example.com/cashier",
       "monitor": 0,
-      "window_mode": "fullscreen"
+      "window_mode": "fullscreen",
+      "open_as": "window",
+      "enabled": true
     },
     {
       "name": "customer",
       "url": "https://example.com/customer-display",
       "monitor": 1,
-      "window_mode": "fullscreen"
+      "window_mode": "fullscreen",
+      "open_as": "window",
+      "enabled": true
     }
   ]
 }

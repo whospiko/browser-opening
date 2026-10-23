@@ -14,6 +14,7 @@ from app_log import get_logger, log_exception, setup_logging
 from browser import BrowserNotFoundError, launch_screens
 from config import (
     ALLOWED_BROWSERS,
+    ALLOWED_OPEN_AS,
     ALLOWED_WINDOW_MODES,
     DEFAULT_OPEN_DELAY_SECONDS,
     MAX_OPEN_DELAY_SECONDS,
@@ -42,12 +43,18 @@ class ScreenRow:
         url: str = "",
         monitor: int = 0,
         window_mode: str = "fullscreen",
+        open_as: str = "window",
+        enabled: bool = True,
     ) -> None:
         self.frame = ttk.Frame(parent)
         self.name_var = tk.StringVar(value=name)
         self.url_var = tk.StringVar(value=url)
+        self.enabled_var = tk.BooleanVar(value=enabled)
         self.window_mode_var = tk.StringVar(
             value=window_mode if window_mode in ALLOWED_WINDOW_MODES else "fullscreen"
+        )
+        self.open_as_var = tk.StringVar(
+            value=open_as if open_as in ALLOWED_OPEN_AS else "window"
         )
         self.order_var = tk.StringVar(value="1")
         self.monitor_combo = ttk.Combobox(self.frame, state="readonly")
@@ -59,6 +66,13 @@ class ScreenRow:
             state="readonly",
             width=12,
         )
+        self.open_as_combo = ttk.Combobox(
+            self.frame,
+            textvariable=self.open_as_var,
+            values=ALLOWED_OPEN_AS,
+            state="readonly",
+            width=10,
+        )
 
         ttk.Label(self.frame, textvariable=self.order_var, width=3, anchor="center").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
@@ -69,19 +83,23 @@ class ScreenRow:
         self.up_btn.pack(side="left", padx=(0, 2))
         self.down_btn = ttk.Button(move, text="↓", width=3, command=lambda: on_move_down(self))
         self.down_btn.pack(side="left")
-        ttk.Entry(self.frame, textvariable=self.name_var, width=14).grid(
-            row=0, column=2, sticky="ew", padx=(0, 6)
+        ttk.Checkbutton(self.frame, variable=self.enabled_var).grid(
+            row=0, column=2, sticky="w", padx=(0, 6)
         )
-        ttk.Entry(self.frame, textvariable=self.url_var).grid(
+        ttk.Entry(self.frame, textvariable=self.name_var, width=14).grid(
             row=0, column=3, sticky="ew", padx=(0, 6)
         )
-        self.monitor_combo.grid(row=0, column=4, sticky="ew", padx=(0, 6))
-        self.window_combo.grid(row=0, column=5, sticky="ew", padx=(0, 6))
-        ttk.Button(self.frame, text="Remove", width=8, command=lambda: on_remove(self)).grid(
-            row=0, column=6, sticky="e"
+        ttk.Entry(self.frame, textvariable=self.url_var).grid(
+            row=0, column=4, sticky="ew", padx=(0, 6)
         )
-        self.frame.columnconfigure(3, weight=1)
+        self.monitor_combo.grid(row=0, column=5, sticky="ew", padx=(0, 6))
+        self.window_combo.grid(row=0, column=6, sticky="ew", padx=(0, 6))
+        self.open_as_combo.grid(row=0, column=7, sticky="ew", padx=(0, 6))
+        ttk.Button(self.frame, text="Remove", width=8, command=lambda: on_remove(self)).grid(
+            row=0, column=8, sticky="e"
+        )
         self.frame.columnconfigure(4, weight=1)
+        self.frame.columnconfigure(5, weight=1)
         self._select_monitor(monitor)
 
     def set_order(self, index: int, total: int) -> None:
@@ -108,11 +126,16 @@ class ScreenRow:
         mode = self.window_mode_var.get()
         if mode not in ALLOWED_WINDOW_MODES:
             mode = "fullscreen"
+        open_as = self.open_as_var.get()
+        if open_as not in ALLOWED_OPEN_AS:
+            open_as = "window"
         return ScreenConfig(
             name=self.name_var.get().strip(),
             url=self.url_var.get().strip(),
             monitor=max(self.monitor_combo.current(), 0),
             window_mode=mode,
+            open_as=open_as,
+            enabled=bool(self.enabled_var.get()),
         )
 
 
@@ -121,7 +144,7 @@ class ConfigApp(tk.Tk):
         super().__init__()
         self.title("Browser Tool Config")
         self.resizable(True, True)
-        self.minsize(860, 520)
+        self.minsize(960, 520)
 
         self.browser_var = tk.StringVar(value="edge")
         self.startup_mode = tk.StringVar(value="manual")
@@ -193,17 +216,19 @@ class ConfigApp(tk.Tk):
 
         labels = ttk.Frame(self._screens_inner)
         labels.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        labels.columnconfigure(3, weight=1)
         labels.columnconfigure(4, weight=1)
+        labels.columnconfigure(5, weight=1)
         ttk.Label(labels, text="#", width=3, anchor="center").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
         ttk.Label(labels, text="Order", width=8).grid(row=0, column=1, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="Name").grid(row=0, column=2, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="URL").grid(row=0, column=3, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="Monitor").grid(row=0, column=4, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="Window").grid(row=0, column=5, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="").grid(row=0, column=6, sticky="e")
+        ttk.Label(labels, text="On", width=3).grid(row=0, column=2, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Name").grid(row=0, column=3, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="URL").grid(row=0, column=4, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Monitor").grid(row=0, column=5, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Window").grid(row=0, column=6, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Open as").grid(row=0, column=7, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="").grid(row=0, column=8, sticky="e")
 
         self._rows_frame = ttk.Frame(self._screens_inner)
         self._rows_frame.grid(row=1, column=0, sticky="ew")
@@ -300,6 +325,8 @@ class ConfigApp(tk.Tk):
         url: str = "",
         monitor: int = 0,
         window_mode: str = "fullscreen",
+        open_as: str = "window",
+        enabled: bool = True,
         *,
         relayout: bool = True,
     ) -> None:
@@ -313,6 +340,8 @@ class ConfigApp(tk.Tk):
             url=url,
             monitor=monitor,
             window_mode=window_mode,
+            open_as=open_as,
+            enabled=enabled,
         )
         self._screen_rows.append(row)
         if relayout:
@@ -361,7 +390,7 @@ class ConfigApp(tk.Tk):
 
     def _center_on_screen(self) -> None:
         self.update_idletasks()
-        width = max(self.winfo_width(), self.winfo_reqwidth(), 860)
+        width = max(self.winfo_width(), self.winfo_reqwidth(), 960)
         height = max(self.winfo_height(), self.winfo_reqheight(), 520)
         target = next((m for m in self._monitors if m.is_primary), None)
         if target is None and self._monitors:
@@ -399,7 +428,13 @@ class ConfigApp(tk.Tk):
         self.open_delay_var.set(str(cfg.open_delay_seconds))
         self._clear_rows()
         screens = cfg.screens or [
-            ScreenConfig(name="cashier", url="", monitor=0, window_mode="fullscreen"),
+            ScreenConfig(
+                name="cashier",
+                url="",
+                monitor=0,
+                window_mode="fullscreen",
+                open_as="window",
+            ),
         ]
         for screen in screens:
             self._add_screen(
@@ -407,6 +442,8 @@ class ConfigApp(tk.Tk):
                 url=screen.url,
                 monitor=screen.monitor,
                 window_mode=screen.window_mode,
+                open_as=screen.open_as,
+                enabled=screen.enabled,
                 relayout=False,
             )
         self._layout_rows()

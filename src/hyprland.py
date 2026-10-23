@@ -277,6 +277,19 @@ def focus_monitor(monitor_name: str) -> None:
     _run_hyprctl(["dispatch", f"focusmonitor {monitor_name}"])
 
 
+def focus_window(client_or_pid: dict[str, Any] | int | str) -> None:
+    """Focus an existing client so Chromium opens the next URL as a tab there."""
+    if isinstance(client_or_pid, str):
+        address = client_or_pid.strip()
+        selector = f"address:{address}" if address else ""
+    else:
+        selector = _window_selector(client_or_pid)
+    if not selector:
+        return
+    # Classic dispatch works on all Hyprland versions; address:/pid: selectors.
+    _run_hyprctl(["dispatch", f"focuswindow {selector}"])
+
+
 def reload() -> None:
     _run_hyprctl(["reload"])
 
