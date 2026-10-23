@@ -30,21 +30,21 @@ build_linux:
       - dist/browser-tool-linux.tar.gz
     expire_in: 30 days
 
-build_windows:
-  <<: *only_version_tags
-  stage: build
-  tags:
-    - windows
-  before_script:
-    - python scripts/bake_version.py
-  script:
-    - cmd /c build_windows.bat
-  artifacts:
-    name: "browser-tool-windows-$CI_COMMIT_TAG"
-    paths:
-      - dist/browser-tool-setup.exe
-      - dist/browser-tool-windows.zip
-    expire_in: 30 days
+# build_windows:
+#   <<: *only_version_tags
+#   stage: build
+#   tags:
+#     - windows
+#   before_script:
+#     - python scripts/bake_version.py
+#   script:
+#     - cmd /c build_windows.bat
+#   artifacts:
+#     name: "browser-tool-windows-$CI_COMMIT_TAG"
+#     paths:
+#       - dist/browser-tool-setup.exe
+#       - dist/browser-tool-windows.zip
+#     expire_in: 30 days
 
 release:
   <<: *only_version_tags
