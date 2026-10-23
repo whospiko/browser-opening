@@ -11,12 +11,58 @@ from pathlib import Path
 from app_log import get_logger
 from config import AppConfig
 from monitors import Monitor, list_monitors, require_monitor
-from paths import profiles_dir
+from paths import profiles_dir, shared_profile_dir
 
 
 def _sanitize_role(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip().lower()).strip("-_")
     return cleaned or "screen"
+
+
+def _legacy_profile_candidates() -> list[Path]:
+    root = profiles_dir()
+    if not root.is_dir():
+        return []
+    preferred: list[Path] = []
+    others: list[Path] = []
+    for path in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if not path.is_dir() or path.name == "shared":
+            continue
+        if path.name == "cashier":
+            preferred.append(path)
+        else:
+            others.append(path)
+    return preferred + others
+
+
+def ensure_shared_profile() -> Path:
+    """Return the shared Chromium profile, migrating a legacy per-role folder once."""
+    log = get_logger()
+    shared = shared_profile_dir()
+    if shared.exists():
+        return shared
+    root = profiles_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    for candidate in _legacy_profile_candidates():
+        try:
+            nonempty = any(candidate.iterdir())
+        except OSError:
+            nonempty = False
+        if not nonempty:
+            continue
+        try:
+            candidate.rename(shared)
+        except OSError:
+            try:
+                shutil.move(str(candidate), str(shared))
+            except OSError as exc:
+                log.info("Could not migrate profile %s: %s", candidate.name, exc)
+                continue
+        log.info("Migrated browser profile %s -> shared", candidate.name)
+        return shared
+    shared.mkdir(parents=True, exist_ok=True)
+    log.info("Created shared browser profile at %s", shared)
+    return shared
 
 LINUX_EDGE = (
     "microsoft-edge-stable",
@@ -204,12 +250,14 @@ def launch_role(
     monitors = list_monitors()
     monitor = require_monitor(monitors, monitor_index, role)
     binary = find_browser(cfg.browser)
-    profile = profiles_dir() / role
+    profile = ensure_shared_profile()
     hypr = _use_hyprland()
-    log.info("Launching screen %s", role)
+    log.info("Launching screen %s (shared profile)", role)
+    before_addresses: set[str] = set()
     if hypr and monitor.name:
         import hyprland
 
+        before_addresses = hyprland.client_addresses()
         hyprland.focus_monitor(monitor.name)
         time.sleep(0.15)
     args = _launch_args(binary, url, profile, role, monitor, window_mode, hypr)
@@ -217,17 +265,24 @@ def launch_role(
     if hypr and monitor.name:
         import hyprland
 
-        client = hyprland.wait_for_window(proc.pid, class_name=f"pos-{role}")
+        client = hyprland.wait_for_new_window(
+            before_addresses,
+            pid=proc.pid,
+            class_name=f"pos-{role}",
+        )
+        if client is None:
+            client = hyprland.wait_for_window(proc.pid, class_name=f"pos-{role}")
         if client is None:
             raise RuntimeError(
                 f"Opened {role} in the browser, but Hyprland never showed the window. "
                 "Check that Chromium is allowed to run on Wayland."
             )
-        window_pid = int(client.get("pid") or proc.pid)
-        hyprland.place_window(window_pid, monitor.name, window_mode)
+        hyprland.place_window(client, monitor.name, window_mode)
         time.sleep(0.1)
-        hyprland.place_window(window_pid, monitor.name, window_mode)
-        log.info("Placed %s (pid=%s)", role, window_pid)
+        hyprland.place_window(client, monitor.name, window_mode)
+        window_pid = int(client.get("pid") or proc.pid)
+        address = str(client.get("address") or "")
+        log.info("Placed %s (pid=%s address=%s)", role, window_pid, address or "?")
     else:
         log.info("Started %s (pid=%s)", role, proc.pid)
     return proc
@@ -243,17 +298,19 @@ def launch_screens(cfg: AppConfig) -> None:
         (screen.name.strip() or f"screen-{index}")
         for index, screen in enumerate(cfg.screens, start=1)
     )
+    delay = max(0.0, float(cfg.open_delay_seconds))
     log.info(
-        "Launching %d screen(s) (%s) with %s (%s)",
+        "Launching %d screen(s) (%s) with %s (%s); delay between screens=%.2fs",
         len(cfg.screens),
         names or "none",
         cfg.browser,
         binary,
+        delay,
     )
     used_roles: set[str] = set()
     for index, screen in enumerate(cfg.screens):
-        if index:
-            time.sleep(0.4)
+        if index and delay:
+            time.sleep(delay)
         role = _sanitize_role(screen.name)
         base = role
         suffix = 2

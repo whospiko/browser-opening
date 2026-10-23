@@ -16,6 +16,8 @@ from secure_store import (
 
 ALLOWED_BROWSERS = ("edge", "chrome", "brave")
 ALLOWED_WINDOW_MODES = ("fullscreen", "maximized")
+DEFAULT_OPEN_DELAY_SECONDS = 0.4
+MAX_OPEN_DELAY_SECONDS = 120.0
 
 
 @dataclass
@@ -39,12 +41,17 @@ def _default_screens() -> list[ScreenConfig]:
 class AppConfig:
     browser: str = "edge"
     open_on_startup: bool = False
+    open_delay_seconds: float = DEFAULT_OPEN_DELAY_SECONDS
     screens: list[ScreenConfig] = field(default_factory=_default_screens)
 
     def validate(self) -> list[str]:
         errors: list[str] = []
         if self.browser not in ALLOWED_BROWSERS:
             errors.append("Browser must be Edge, Chrome, or Brave.")
+        if self.open_delay_seconds < 0:
+            errors.append("Open delay must be 0 or greater.")
+        elif self.open_delay_seconds > MAX_OPEN_DELAY_SECONDS:
+            errors.append(f"Open delay must be at most {int(MAX_OPEN_DELAY_SECONDS)} seconds.")
         if not self.screens:
             errors.append("Add at least one screen.")
             return errors
@@ -71,6 +78,7 @@ class AppConfig:
         return {
             "browser": self.browser,
             "open_on_startup": self.open_on_startup,
+            "open_delay_seconds": float(self.open_delay_seconds),
             "screens": [
                 {
                     "name": screen.name.strip(),
@@ -168,12 +176,26 @@ def _screens_from_data(data: dict[str, Any], defaults: list[ScreenConfig]) -> li
     return screens if screens else list(defaults)
 
 
+def _normalize_open_delay(raw: Any, fallback: float = DEFAULT_OPEN_DELAY_SECONDS) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    if value < 0:
+        return fallback
+    if value > MAX_OPEN_DELAY_SECONDS:
+        return MAX_OPEN_DELAY_SECONDS
+    return value
+
+
 def config_from_dict(data: dict[str, Any]) -> AppConfig:
     defaults = AppConfig()
     browser = str(data.get("browser", defaults.browser)).strip().lower()
+    delay_raw = data.get("open_delay_seconds", defaults.open_delay_seconds)
     return AppConfig(
         browser=browser,
         open_on_startup=bool(data.get("open_on_startup", defaults.open_on_startup)),
+        open_delay_seconds=_normalize_open_delay(delay_raw, defaults.open_delay_seconds),
         screens=_screens_from_data(data, defaults.screens),
     )
 
@@ -205,10 +227,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise FileNotFoundError(str(target))
     cfg = config_from_dict(load_json_file(target))
     get_logger().info(
-        "Config loaded: browser=%s screens=%d open_on_startup=%s",
+        "Config loaded: browser=%s screens=%d open_on_startup=%s open_delay_seconds=%s",
         cfg.browser,
         len(cfg.screens),
         cfg.open_on_startup,
+        cfg.open_delay_seconds,
     )
     return cfg
 
@@ -229,10 +252,11 @@ def save_config(cfg: AppConfig, path: Path | None = None) -> Path:
         json.dump(envelope, handle, indent=2)
         handle.write("\n")
     get_logger().info(
-        "Config saved (encrypted): %s browser=%s screens=%d open_on_startup=%s",
+        "Config saved (encrypted): %s browser=%s screens=%d open_on_startup=%s open_delay_seconds=%s",
         target,
         cfg.browser,
         len(cfg.screens),
         cfg.open_on_startup,
+        cfg.open_delay_seconds,
     )
     return target

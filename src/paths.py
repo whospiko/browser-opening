@@ -37,6 +37,11 @@ def profiles_dir() -> Path:
     return _data_root() / APP_NAME / "profiles"
 
 
+def shared_profile_dir() -> Path:
+    """Single Chromium user-data-dir shared by every screen (same localStorage)."""
+    return profiles_dir() / "shared"
+
+
 def logs_dir() -> Path:
     return app_dir() / "log"
 

@@ -15,6 +15,8 @@ from browser import BrowserNotFoundError, launch_screens
 from config import (
     ALLOWED_BROWSERS,
     ALLOWED_WINDOW_MODES,
+    DEFAULT_OPEN_DELAY_SECONDS,
+    MAX_OPEN_DELAY_SECONDS,
     AppConfig,
     ScreenConfig,
     load_config_or_default,
@@ -34,6 +36,8 @@ class ScreenRow:
         parent: ttk.Frame,
         monitor_labels: list[str],
         on_remove,
+        on_move_up,
+        on_move_down,
         name: str = "",
         url: str = "",
         monitor: int = 0,
@@ -45,6 +49,7 @@ class ScreenRow:
         self.window_mode_var = tk.StringVar(
             value=window_mode if window_mode in ALLOWED_WINDOW_MODES else "fullscreen"
         )
+        self.order_var = tk.StringVar(value="1")
         self.monitor_combo = ttk.Combobox(self.frame, state="readonly")
         self.monitor_combo.configure(values=monitor_labels or ["Monitor 0 (none detected)"])
         self.window_combo = ttk.Combobox(
@@ -55,20 +60,34 @@ class ScreenRow:
             width=12,
         )
 
+        ttk.Label(self.frame, textvariable=self.order_var, width=3, anchor="center").grid(
+            row=0, column=0, sticky="w", padx=(0, 4)
+        )
+        move = ttk.Frame(self.frame)
+        move.grid(row=0, column=1, sticky="w", padx=(0, 6))
+        self.up_btn = ttk.Button(move, text="↑", width=3, command=lambda: on_move_up(self))
+        self.up_btn.pack(side="left", padx=(0, 2))
+        self.down_btn = ttk.Button(move, text="↓", width=3, command=lambda: on_move_down(self))
+        self.down_btn.pack(side="left")
         ttk.Entry(self.frame, textvariable=self.name_var, width=14).grid(
-            row=0, column=0, sticky="ew", padx=(0, 6)
+            row=0, column=2, sticky="ew", padx=(0, 6)
         )
         ttk.Entry(self.frame, textvariable=self.url_var).grid(
-            row=0, column=1, sticky="ew", padx=(0, 6)
+            row=0, column=3, sticky="ew", padx=(0, 6)
         )
-        self.monitor_combo.grid(row=0, column=2, sticky="ew", padx=(0, 6))
-        self.window_combo.grid(row=0, column=3, sticky="ew", padx=(0, 6))
+        self.monitor_combo.grid(row=0, column=4, sticky="ew", padx=(0, 6))
+        self.window_combo.grid(row=0, column=5, sticky="ew", padx=(0, 6))
         ttk.Button(self.frame, text="Remove", width=8, command=lambda: on_remove(self)).grid(
-            row=0, column=4, sticky="e"
+            row=0, column=6, sticky="e"
         )
-        self.frame.columnconfigure(1, weight=1)
-        self.frame.columnconfigure(2, weight=1)
+        self.frame.columnconfigure(3, weight=1)
+        self.frame.columnconfigure(4, weight=1)
         self._select_monitor(monitor)
+
+    def set_order(self, index: int, total: int) -> None:
+        self.order_var.set(str(index + 1))
+        self.up_btn.configure(state="disabled" if index <= 0 else "normal")
+        self.down_btn.configure(state="disabled" if index >= total - 1 else "normal")
 
     def _select_monitor(self, index: int) -> None:
         values = list(self.monitor_combo.cget("values") or ())
@@ -102,10 +121,11 @@ class ConfigApp(tk.Tk):
         super().__init__()
         self.title("Browser Tool Config")
         self.resizable(True, True)
-        self.minsize(780, 520)
+        self.minsize(860, 520)
 
         self.browser_var = tk.StringVar(value="edge")
         self.startup_mode = tk.StringVar(value="manual")
+        self.open_delay_var = tk.StringVar(value=str(DEFAULT_OPEN_DELAY_SECONDS))
         self._save_warned = False
         self._monitors = []
         self._screen_rows: list[ScreenRow] = []
@@ -173,13 +193,17 @@ class ConfigApp(tk.Tk):
 
         labels = ttk.Frame(self._screens_inner)
         labels.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        labels.columnconfigure(1, weight=1)
-        labels.columnconfigure(2, weight=1)
-        ttk.Label(labels, text="Name").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="URL").grid(row=0, column=1, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="Monitor").grid(row=0, column=2, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="Window").grid(row=0, column=3, sticky="w", padx=(0, 6))
-        ttk.Label(labels, text="").grid(row=0, column=4, sticky="e")
+        labels.columnconfigure(3, weight=1)
+        labels.columnconfigure(4, weight=1)
+        ttk.Label(labels, text="#", width=3, anchor="center").grid(
+            row=0, column=0, sticky="w", padx=(0, 4)
+        )
+        ttk.Label(labels, text="Order", width=8).grid(row=0, column=1, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Name").grid(row=0, column=2, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="URL").grid(row=0, column=3, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Monitor").grid(row=0, column=4, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="Window").grid(row=0, column=5, sticky="w", padx=(0, 6))
+        ttk.Label(labels, text="").grid(row=0, column=6, sticky="e")
 
         self._rows_frame = ttk.Frame(self._screens_inner)
         self._rows_frame.grid(row=1, column=0, sticky="ew")
@@ -203,6 +227,23 @@ class ConfigApp(tk.Tk):
             value="startup",
             variable=self.startup_mode,
         ).pack(anchor="w")
+
+        ttk.Label(options, text="Delay between screens").grid(
+            row=1, column=0, sticky="w", **pad
+        )
+        delay_row = ttk.Frame(options)
+        delay_row.grid(row=1, column=1, sticky="w", **pad)
+        ttk.Spinbox(
+            delay_row,
+            from_=0,
+            to=int(MAX_OPEN_DELAY_SECONDS),
+            increment=0.5,
+            textvariable=self.open_delay_var,
+            width=8,
+        ).pack(side="left")
+        ttk.Label(delay_row, text="seconds (opens next screen after this wait)").pack(
+            side="left", padx=(6, 0)
+        )
 
         self.status = ttk.Label(root, text=f"Config file: {config_path()}")
         self.status.grid(row=5, column=0, sticky="w", padx=12, pady=(12, 4))
@@ -266,6 +307,8 @@ class ConfigApp(tk.Tk):
             self._rows_frame,
             self._monitor_labels,
             on_remove=self._remove_screen,
+            on_move_up=self._move_screen_up,
+            on_move_down=self._move_screen_down,
             name=name,
             url=url,
             monitor=monitor,
@@ -287,16 +330,38 @@ class ConfigApp(tk.Tk):
         self._screen_rows.remove(row)
         self._layout_rows()
 
+    def _move_screen_up(self, row: ScreenRow) -> None:
+        index = self._screen_rows.index(row)
+        if index <= 0:
+            return
+        self._screen_rows[index - 1], self._screen_rows[index] = (
+            self._screen_rows[index],
+            self._screen_rows[index - 1],
+        )
+        self._layout_rows()
+
+    def _move_screen_down(self, row: ScreenRow) -> None:
+        index = self._screen_rows.index(row)
+        if index >= len(self._screen_rows) - 1:
+            return
+        self._screen_rows[index + 1], self._screen_rows[index] = (
+            self._screen_rows[index],
+            self._screen_rows[index + 1],
+        )
+        self._layout_rows()
+
     def _layout_rows(self) -> None:
+        total = len(self._screen_rows)
         for index, row in enumerate(self._screen_rows):
             row.frame.grid(row=index, column=0, sticky="ew", pady=3)
-            row.frame.columnconfigure(1, weight=1)
-            row.frame.columnconfigure(2, weight=1)
+            row.frame.columnconfigure(3, weight=1)
+            row.frame.columnconfigure(4, weight=1)
+            row.set_order(index, total)
         self._on_screens_configure()
 
     def _center_on_screen(self) -> None:
         self.update_idletasks()
-        width = max(self.winfo_width(), self.winfo_reqwidth(), 780)
+        width = max(self.winfo_width(), self.winfo_reqwidth(), 860)
         height = max(self.winfo_height(), self.winfo_reqheight(), 520)
         target = next((m for m in self._monitors if m.is_primary), None)
         if target is None and self._monitors:
@@ -331,6 +396,7 @@ class ConfigApp(tk.Tk):
             cfg = AppConfig(screens=[])
         self.browser_var.set(cfg.browser if cfg.browser in ALLOWED_BROWSERS else "edge")
         self.startup_mode.set("startup" if cfg.open_on_startup else "manual")
+        self.open_delay_var.set(str(cfg.open_delay_seconds))
         self._clear_rows()
         screens = cfg.screens or [
             ScreenConfig(name="cashier", url="", monitor=0, window_mode="fullscreen"),
@@ -345,10 +411,18 @@ class ConfigApp(tk.Tk):
             )
         self._layout_rows()
 
+    def _parse_open_delay(self) -> float:
+        raw = self.open_delay_var.get().strip()
+        try:
+            return float(raw)
+        except ValueError:
+            return DEFAULT_OPEN_DELAY_SECONDS
+
     def _form_config(self) -> AppConfig:
         return AppConfig(
             browser=self.browser_var.get(),
             open_on_startup=self.startup_mode.get() == "startup",
+            open_delay_seconds=self._parse_open_delay(),
             screens=[row.to_config() for row in self._screen_rows],
         )
 

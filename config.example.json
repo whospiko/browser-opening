@@ -1,6 +1,7 @@
 {
   "browser": "edge",
   "open_on_startup": false,
+  "open_delay_seconds": 0.4,
   "screens": [
     {
       "name": "cashier",

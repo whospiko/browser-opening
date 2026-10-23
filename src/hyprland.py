@@ -73,34 +73,96 @@ def list_monitor_dicts() -> list[dict[str, Any]]:
     return monitors
 
 
+def list_clients() -> list[dict[str, Any]]:
+    completed = _run_hyprctl(["-j", "clients"])
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return []
+    try:
+        clients = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(clients, list):
+        return []
+    return [c for c in clients if isinstance(c, dict)]
+
+
+def client_addresses(clients: list[dict[str, Any]] | None = None) -> set[str]:
+    items = clients if clients is not None else list_clients()
+    addresses: set[str] = set()
+    for client in items:
+        address = str(client.get("address") or "").strip()
+        if address:
+            addresses.add(address)
+    return addresses
+
+
 def wait_for_window(
     pid: int, class_name: str | None = None, timeout: float = 12.0
 ) -> dict[str, Any] | None:
     deadline = time.time() + timeout
     wanted = {pid, *_descendant_pids(pid)}
     while time.time() < deadline:
-        completed = _run_hyprctl(["-j", "clients"])
-        if completed.returncode == 0 and completed.stdout.strip():
-            try:
-                clients = json.loads(completed.stdout)
-            except json.JSONDecodeError:
-                clients = []
-            if isinstance(clients, list):
-                by_pid = None
-                by_class = None
-                for client in clients:
-                    if not isinstance(client, dict):
-                        continue
-                    if int(client.get("pid") or 0) in wanted:
-                        by_pid = client
-                    class_value = str(client.get("class") or "")
-                    if class_name and class_value == class_name:
-                        by_class = client
-                if by_pid is not None:
-                    return by_pid
-                if by_class is not None:
-                    return by_class
+        clients = list_clients()
+        by_pid = None
+        by_class = None
+        for client in clients:
+            if int(client.get("pid") or 0) in wanted:
+                by_pid = client
+            class_value = str(client.get("class") or "")
+            if class_name and class_value == class_name:
+                by_class = client
+        if by_pid is not None:
+            return by_pid
+        if by_class is not None:
+            return by_class
         wanted.update(_descendant_pids(pid))
+        time.sleep(0.15)
+    return None
+
+
+def wait_for_new_window(
+    before_addresses: set[str],
+    *,
+    pid: int | None = None,
+    class_name: str | None = None,
+    timeout: float = 12.0,
+) -> dict[str, Any] | None:
+    """Wait for a client whose address was not in before_addresses.
+
+    Falls back to pid/class matching when Chromium reuses an address set or
+    the new window is slow to appear in the client list.
+    """
+    deadline = time.time() + timeout
+    wanted: set[int] = set()
+    if pid is not None:
+        wanted = {pid, *_descendant_pids(pid)}
+    while time.time() < deadline:
+        clients = list_clients()
+        for client in clients:
+            address = str(client.get("address") or "").strip()
+            if address and address not in before_addresses:
+                return client
+        if wanted:
+            for client in clients:
+                if int(client.get("pid") or 0) in wanted:
+                    address = str(client.get("address") or "").strip()
+                    if address and address not in before_addresses:
+                        return client
+                    if not address:
+                        return client
+            for client in clients:
+                class_value = str(client.get("class") or "")
+                if class_name and class_value == class_name:
+                    address = str(client.get("address") or "").strip()
+                    if address and address not in before_addresses:
+                        return client
+            wanted.update(_descendant_pids(pid) if pid is not None else set())
+        elif class_name:
+            for client in clients:
+                if str(client.get("class") or "") == class_name:
+                    address = str(client.get("address") or "").strip()
+                    if address and address not in before_addresses:
+                        return client
         time.sleep(0.15)
     return None
 
@@ -138,8 +200,22 @@ def _descendant_pids(root: int) -> set[int]:
     return found
 
 
-def place_window(pid: int, monitor_name: str, window_mode: str = "fullscreen") -> None:
-    selector = f"pid:{pid}"
+def _window_selector(client_or_pid: dict[str, Any] | int) -> str:
+    if isinstance(client_or_pid, dict):
+        address = str(client_or_pid.get("address") or "").strip()
+        if address:
+            return f"address:{address}"
+        pid = int(client_or_pid.get("pid") or 0)
+        return f"pid:{pid}"
+    return f"pid:{int(client_or_pid)}"
+
+
+def place_window(
+    client_or_pid: dict[str, Any] | int,
+    monitor_name: str,
+    window_mode: str = "fullscreen",
+) -> None:
+    selector = _window_selector(client_or_pid)
     maximize = window_mode == "maximized"
     # Hyprland: 1 = maximized (keeps decorations), 2 = true fullscreen.
     # Client 0 keeps Chromium's title bar (close / minimize) in maximized mode.
