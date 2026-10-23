@@ -1,0 +1,18 @@
+{
+  "browser": "edge",
+  "open_on_startup": false,
+  "screens": [
+    {
+      "name": "cashier",
+      "url": "https://example.com/cashier",
+      "monitor": 0,
+      "window_mode": "fullscreen"
+    },
+    {
+      "name": "customer",
+      "url": "https://example.com/customer-display",
+      "monitor": 1,
+      "window_mode": "fullscreen"
+    }
+  ]
+}

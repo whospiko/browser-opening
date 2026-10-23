@@ -1,0 +1,37 @@
+name: Sync to GitLab
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GITLAB_TOKEN}" ]]; then
+            echo "GITLAB_TOKEN secret is not set" >&2
+            exit 1
+          fi
+          git config --global user.name "GitHub Action Sync"
+          git config --global user.email "actions@github.com"
+
+          # Replace OWNER/PROJECT with your GitLab path (same as src/version.py GITLAB_PROJECT).
+          git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@gitlab.com/whospiko/browser-opening.git"
+
+          # Sync the default branch tip to GitLab main.
+          git push -f gitlab HEAD:main
+
+          # Tags must be pushed so GitLab CI can build releases on v*.*.*.
+          git push gitlab --tags

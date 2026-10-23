@@ -1,0 +1,77 @@
+# Build and publish Browser Tool on version tags (v1.2.3).
+# Requires a Windows runner tagged "windows" (self-hosted) for .exe builds.
+
+stages:
+  - build
+  - release
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+.only_version_tags: &only_version_tags
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+
+build_linux:
+  <<: *only_version_tags
+  stage: build
+  image: python:3.12-bookworm
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq python3-tk tcl-dev tk-dev libx11-dev
+    - python scripts/bake_version.py
+    - python -m pip install -q -r requirements.txt
+  script:
+    - chmod +x build_linux.sh
+    - ./build_linux.sh
+  artifacts:
+    name: "browser-tool-linux-$CI_COMMIT_TAG"
+    paths:
+      - dist/browser-tool-linux.tar.gz
+    expire_in: 30 days
+
+build_windows:
+  <<: *only_version_tags
+  stage: build
+  tags:
+    - windows
+  before_script:
+    - python scripts/bake_version.py
+  script:
+    - cmd /c build_windows.bat
+  artifacts:
+    name: "browser-tool-windows-$CI_COMMIT_TAG"
+    paths:
+      - dist/browser-tool-setup.exe
+      - dist/browser-tool-windows.zip
+    expire_in: 30 days
+
+release:
+  <<: *only_version_tags
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - build_linux
+    - build_windows
+  script:
+    - |
+      set -euo pipefail
+      PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/browser-tool/${CI_COMMIT_TAG}"
+      for f in \
+        dist/browser-tool-linux.tar.gz \
+        dist/browser-tool-setup.exe \
+        dist/browser-tool-windows.zip
+      do
+        name="$(basename "$f")"
+        echo "Uploading ${name}"
+        curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "$f" \
+          "${PKG_URL}/${name}"
+      done
+      release-cli create \
+        --name "Browser Tool ${CI_COMMIT_TAG}" \
+        --tag-name "${CI_COMMIT_TAG}" \
+        --description "Packaged builds for Linux and Windows." \
+        --assets-link "{\"name\":\"browser-tool-linux.tar.gz\",\"url\":\"${PKG_URL}/browser-tool-linux.tar.gz\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"browser-tool-setup.exe\",\"url\":\"${PKG_URL}/browser-tool-setup.exe\",\"link_type\":\"package\"}" \
+        --assets-link "{\"name\":\"browser-tool-windows.zip\",\"url\":\"${PKG_URL}/browser-tool-windows.zip\",\"link_type\":\"package\"}"
