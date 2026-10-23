@@ -53,6 +53,9 @@ release:
   needs:
     - build_linux
     # - build_windows
+  before_script:
+    # release-cli image is Alpine and does not ship curl
+    - apk add --no-cache curl
   script:
     - |
       set -euo pipefail
