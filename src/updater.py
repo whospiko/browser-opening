@@ -1,4 +1,4 @@
-"""Check GitLab Releases and replace packaged binaries in place."""
+"""Check Cloudflare R2 for updates and replace packaged binaries in place."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import tarfile
 import tempfile
 import threading
 import urllib.error
-import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from pathlib import Path
 
 from app_log import get_logger, log_exception
 from paths import app_dir, is_frozen
-from version import GITLAB_HOST, GITLAB_PROJECT, __version__
+from version import R2_PUBLIC_BASE, __version__
 
 USER_AGENT = f"browser-tool-updater/{__version__}"
 
@@ -37,7 +36,6 @@ def parse_version(text: str) -> tuple[int, ...]:
     raw = text.strip()
     if raw.lower().startswith("v"):
         raw = raw[1:]
-    # Drop pre-release / local suffix for numeric compare
     for sep in ("-", "+", "_"):
         if sep in raw:
             raw = raw.split(sep, 1)[0]
@@ -70,16 +68,23 @@ def _config_binary_name() -> str:
     return "browser-tool-config.exe" if sys.platform == "win32" else "browser-tool-config"
 
 
-def _api_get(url: str) -> dict | list:
+def _r2_base() -> str:
+    base = (R2_PUBLIC_BASE or "").rstrip("/")
+    if not base:
+        raise RuntimeError("R2_PUBLIC_BASE is not set in src/version.py")
+    return base
+
+
+def _download_bytes(url: str) -> bytes:
     req = urllib.request.Request(
         url,
         headers={
             "User-Agent": USER_AGENT,
-            "Accept": "application/json",
+            "Accept": "*/*",
         },
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        return resp.read()
 
 
 def _download(url: str, dest: Path) -> None:
@@ -89,49 +94,37 @@ def _download(url: str, dest: Path) -> None:
 
 
 def fetch_latest_release() -> ReleaseInfo:
-    if not GITLAB_PROJECT or GITLAB_PROJECT == "OWNER/PROJECT":
-        raise RuntimeError(
-            "GITLAB_PROJECT is not set. Edit src/version.py before shipping builds."
-        )
-    encoded = urllib.parse.quote(GITLAB_PROJECT, safe="")
-    url = f"{GITLAB_HOST}/api/v4/projects/{encoded}/releases/permalink/latest"
-    data = _api_get(url)
+    """Read latest/version.json from R2 and build the platform download URL."""
+    base = _r2_base()
+    meta_url = f"{base}/latest/version.json"
+    raw = _download_bytes(meta_url)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid version.json at {meta_url}") from exc
     if not isinstance(data, dict):
-        raise RuntimeError("Unexpected GitLab releases response")
-    tag = str(data.get("tag_name") or "").strip()
-    if not tag:
-        raise RuntimeError("Latest release has no tag_name")
-    version = tag[1:] if tag.lower().startswith("v") else tag
+        raise RuntimeError("version.json must be a JSON object")
+
+    tag = str(data.get("tag") or "").strip()
+    version = str(data.get("version") or "").strip()
+    if not version and tag:
+        version = tag[1:] if tag.lower().startswith("v") else tag
+    if not tag and version:
+        tag = version if version.lower().startswith("v") else f"v{version}"
+    if not tag or not version:
+        raise RuntimeError("version.json missing tag/version")
+
     wanted = _asset_name_for_platform()
-    download_url = _find_asset_url(data, wanted, version)
+    assets = data.get("assets") if isinstance(data.get("assets"), dict) else {}
+    download_url = str(assets.get(wanted) or "").strip()
     if not download_url:
-        raise RuntimeError(f"Release {tag} has no asset named {wanted}")
+        download_url = f"{base}/{tag}/{wanted}"
+
     return ReleaseInfo(
         tag=tag,
         version=version,
         download_url=download_url,
         asset_name=wanted,
-    )
-
-
-def _find_asset_url(release: dict, asset_name: str, version: str) -> str | None:
-    """Prefer release links / assets, then fall back to Generic Package Registry URL."""
-    assets = release.get("assets") or {}
-    for link in assets.get("links") or []:
-        name = str(link.get("name") or "")
-        url = str(link.get("url") or "")
-        if name == asset_name or url.rstrip("/").endswith(asset_name):
-            return url
-    for source in assets.get("sources") or []:
-        url = str(source.get("url") or "")
-        if url.rstrip("/").endswith(asset_name):
-            return url
-    # Generic Package Registry layout used by .gitlab-ci.yml
-    encoded = urllib.parse.quote(GITLAB_PROJECT, safe="")
-    tag = release.get("tag_name") or f"v{version}"
-    return (
-        f"{GITLAB_HOST}/api/v4/projects/{encoded}/packages/generic/"
-        f"browser-tool/{tag}/{asset_name}"
     )
 
 
@@ -204,7 +197,7 @@ def _spawn_helper_and_exit(staging: Path) -> None:
         helper = helper_dir / "apply_update.bat"
         lines = [
             "@echo off",
-            f":waitloop",
+            ":waitloop",
             f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL',
             "if not errorlevel 1 (",
             "  timeout /t 1 /nobreak >NUL",
@@ -222,7 +215,7 @@ def _spawn_helper_and_exit(staging: Path) -> None:
             [
                 f'start "" "{config_bin}"',
                 f'rmdir /s /q "{staging}"',
-                f'del "%~f0"',
+                'del "%~f0"',
                 f'rmdir "{helper_dir}" 2>NUL',
             ]
         )
@@ -287,7 +280,7 @@ def download_and_stage(release: ReleaseInfo) -> Path:
 def check_for_update() -> tuple[str, ReleaseInfo | None]:
     """
     Returns (status, release).
-    status: 'dev' | 'uptodate' | 'available' | 'error'
+    status: 'dev' | 'uptodate' | 'available'
     """
     if not is_frozen():
         return "dev", None

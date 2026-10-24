@@ -1,5 +1,6 @@
 # Build and publish Browser Tool on version tags (v1.2.3).
 # Requires a Windows runner tagged "windows" (self-hosted) for .exe builds.
+# After build: upload installers to Cloudflare R2 (public downloads + in-app Update).
 
 stages:
   - build
@@ -7,6 +8,8 @@ stages:
 
 variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  R2_BUCKET: "browser-tool-releases"
+  R2_PUBLIC_BASE: "https://download-hengkakada.thecapy.org"
 
 .only_version_tags: &only_version_tags
   rules:
@@ -54,11 +57,27 @@ release:
     - build_linux
     - build_windows
   before_script:
-    # release-cli image is Alpine and does not ship curl
-    - apk add --no-cache curl
+    - apk add --no-cache curl python3 py3-pip
+    - pip3 install --break-system-packages -q awscli
   script:
     - |
       set -euo pipefail
+
+      if [[ -z "${R2_ACCOUNT_ID:-}" || -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
+        echo "Missing R2 CI variables: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY" >&2
+        exit 1
+      fi
+
+      VERSION="${CI_COMMIT_TAG#v}"
+      export VERSION
+      PUBLIC_BASE="${R2_PUBLIC_BASE%/}"
+      export PUBLIC_BASE
+      ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+      export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+      export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
+      export AWS_DEFAULT_REGION="auto"
+
+      # Optional internal GitLab package mirror (works while logged into GitLab).
       PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/browser-tool/${CI_COMMIT_TAG}"
       for f in \
         dist/browser-tool-linux.tar.gz \
@@ -66,15 +85,47 @@ release:
         dist/browser-tool-windows.zip
       do
         name="$(basename "$f")"
-        echo "Uploading ${name}"
+        echo "Uploading ${name} to GitLab Package Registry"
         curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
           --upload-file "$f" \
           "${PKG_URL}/${name}"
       done
+
+      # Public R2: versioned path + latest/ mirror for blog + in-app Update.
+      for f in \
+        dist/browser-tool-linux.tar.gz \
+        dist/browser-tool-setup.exe \
+        dist/browser-tool-windows.zip
+      do
+        name="$(basename "$f")"
+        echo "Uploading ${name} to R2 ${R2_BUCKET}/${CI_COMMIT_TAG}/"
+        aws s3 cp "$f" "s3://${R2_BUCKET}/${CI_COMMIT_TAG}/${name}" \
+          --endpoint-url "${ENDPOINT}"
+        aws s3 cp "$f" "s3://${R2_BUCKET}/latest/${name}" \
+          --endpoint-url "${ENDPOINT}"
+      done
+
+      python3 -c "import json,os; from pathlib import Path; base=os.environ['PUBLIC_BASE']; tag=os.environ['CI_COMMIT_TAG']; version=os.environ['VERSION']; data={'version':version,'tag':tag,'assets':{'browser-tool-linux.tar.gz':f'{base}/{tag}/browser-tool-linux.tar.gz','browser-tool-setup.exe':f'{base}/{tag}/browser-tool-setup.exe','browser-tool-windows.zip':f'{base}/{tag}/browser-tool-windows.zip'}}; Path('/tmp/version.json').write_text(json.dumps(data,indent=2)+'\n',encoding='utf-8')"
+      aws s3 cp /tmp/version.json "s3://${R2_BUCKET}/${CI_COMMIT_TAG}/version.json" \
+        --endpoint-url "${ENDPOINT}" --content-type "application/json"
+      aws s3 cp /tmp/version.json "s3://${R2_BUCKET}/latest/version.json" \
+        --endpoint-url "${ENDPOINT}" --content-type "application/json"
+
+      echo "Public downloads:"
+      echo "  ${PUBLIC_BASE}/${CI_COMMIT_TAG}/browser-tool-setup.exe"
+      echo "  ${PUBLIC_BASE}/${CI_COMMIT_TAG}/browser-tool-linux.tar.gz"
+      echo "  ${PUBLIC_BASE}/latest/version.json"
+
+      set +e
       release-cli create \
         --name "Browser Tool ${CI_COMMIT_TAG}" \
         --tag-name "${CI_COMMIT_TAG}" \
-        --description "Packaged builds for Linux and Windows." \
-        --assets-link "{\"name\":\"browser-tool-linux.tar.gz\",\"url\":\"${PKG_URL}/browser-tool-linux.tar.gz\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"browser-tool-setup.exe\",\"url\":\"${PKG_URL}/browser-tool-setup.exe\",\"link_type\":\"package\"}" \
-        --assets-link "{\"name\":\"browser-tool-windows.zip\",\"url\":\"${PKG_URL}/browser-tool-windows.zip\",\"link_type\":\"package\"}"
+        --description "Packaged builds for Linux and Windows. Public downloads: ${PUBLIC_BASE}/${CI_COMMIT_TAG}/" \
+        --assets-link "{\"name\":\"browser-tool-linux.tar.gz\",\"url\":\"${PUBLIC_BASE}/${CI_COMMIT_TAG}/browser-tool-linux.tar.gz\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"browser-tool-setup.exe\",\"url\":\"${PUBLIC_BASE}/${CI_COMMIT_TAG}/browser-tool-setup.exe\",\"link_type\":\"other\"}" \
+        --assets-link "{\"name\":\"browser-tool-windows.zip\",\"url\":\"${PUBLIC_BASE}/${CI_COMMIT_TAG}/browser-tool-windows.zip\",\"link_type\":\"other\"}"
+      rc=$?
+      set -e
+      if [[ "$rc" -ne 0 ]]; then
+        echo "release-cli exited ${rc} (409 Release already exists is OK on retry)"
+      fi

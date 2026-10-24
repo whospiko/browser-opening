@@ -9,25 +9,30 @@ They share `config.json` in the install folder (next to the binaries). Saves wri
 
 Works on **Linux** (Arch, Omarchy/Hyprland, and typical X11/Wayland desktops) and **Windows**. Develop and test on Linux; build `.exe` files on a Windows PC (or GitLab’s Windows runner).
 
-Packaged Config shows **Version** and an **Update** button: it checks the latest GitLab Release and replaces the binaries in the install folder (keeps `config.json` and `log/`), then restarts Config. No uninstall needed.
+Packaged Config shows **Version** and an **Update** button: it checks Cloudflare R2 (`latest/version.json`) and replaces the binaries in the install folder (keeps `config.json` and `log/`), then restarts Config. No uninstall needed.
 
-## Releases (GitHub → GitLab)
+## Releases (GitHub → GitLab → R2)
 
-Source is on **GitHub**. Builds run on **GitLab CI** after a sync Action mirrors the repo.
+Source stays **private** on GitHub/GitLab. Public downloads and in-app updates use **Cloudflare R2** at `https://download-hengkakada.thecapy.org` (bucket `browser-tool-releases`).
 
-1. Set `GITLAB_PROJECT` in [`src/version.py`](src/version.py) (e.g. `whospiko/browser-opening`).
-2. Put the same GitLab path in [`.github/workflows/sync-gitlab.yml`](.github/workflows/sync-gitlab.yml) (`gitlab.com/OWNER/PROJECT.git`).
-3. On GitHub: add secret `GITLAB_TOKEN` (GitLab PAT with `write_repository`).
-4. On GitLab: create the project (prefer **public** so Update needs no token), enable CI, and register a **Windows** runner tagged `windows` (Linux builds use shared runners).
-5. Publish a version:
+1. Sync + CI setup as before (`GITLAB_TOKEN`, Windows runner tagged `windows`).
+2. On GitLab CI/CD variables (masked), set:
+   - `R2_ACCOUNT_ID`
+   - `R2_ACCESS_KEY_ID`
+   - `R2_SECRET_ACCESS_KEY`
+3. R2 bucket `browser-tool-releases` with custom domain `download-hengkakada.thecapy.org` (public).
+4. Publish a version:
    ```bash
    git tag v1.0.0
    git push origin v1.0.0
    ```
-   The sync Action pushes `main` + tags to GitLab. GitLab CI builds Linux + Windows and creates a Release with:
-   - `browser-tool-linux.tar.gz` — Linux install + in-app update
-   - `browser-tool-setup.exe` — Windows first install
-   - `browser-tool-windows.zip` — Windows in-app update (two exes)
+   CI builds Linux + Windows, then uploads to R2:
+   - `https://download-hengkakada.thecapy.org/v1.0.0/browser-tool-setup.exe`
+   - `https://download-hengkakada.thecapy.org/v1.0.0/browser-tool-linux.tar.gz`
+   - `…/v1.0.0/browser-tool-windows.zip` (in-app Update)
+   - `…/latest/` copies of the same + `version.json` (Update + evergreen blog links)
+
+Blog: paste the `v1.0.0/…` or `latest/…` R2 URLs. Keep the GitLab project **private** so source is not public.
 
 Manual sync: GitHub → Actions → **Sync to GitLab** → Run workflow.
 
@@ -45,13 +50,13 @@ browser-tool/
 
 ### Windows
 
-1. Download `browser-tool-setup.exe` from the GitLab Release (or build with `build_windows.bat`).
+1. Download `browser-tool-setup.exe` from R2 (e.g. `…/latest/browser-tool-setup.exe`) or build with `build_windows.bat`.
 2. Double-click setup → pick a drive (e.g. `D:`) → installs to `D:\browser-tool\` with both exes, an empty `log\` folder, and icons on the binaries.
-3. Later updates: open Config → **Update** (uses `browser-tool-windows.zip` from the Release).
+3. Later updates: open Config → **Update** (downloads `browser-tool-windows.zip` from R2).
 
 ### Linux
 
-1. Download `browser-tool-linux.tar.gz` from the GitLab Release (or build with `./build_linux.sh`).
+1. Download `browser-tool-linux.tar.gz` from R2 (e.g. `…/latest/browser-tool-linux.tar.gz`) or build with `./build_linux.sh`.
 2. Then:
 
 ```bash
@@ -102,7 +107,7 @@ On Windows, create a venv the same way (`py -3.12 -m venv .venv` then `.venv\Scr
 - **Open as** is per screen: *window* (default) opens a new browser window on the chosen monitor — you can put several windows on the same monitor. *tab* opens the URL as a new tab in the latest prior *window* on that same monitor (by list order). A *tab* row needs an **On** *window* on the same monitor above it; otherwise Save / launch reports an error. Missing `open_as` in older configs is treated as *window*.
 - All screens share one browser profile (`…/POSBrowserLauncher/profiles/shared` on Linux under `~/.local/share`, or under `%LOCALAPPDATA%` on Windows) so login and localStorage for the same site are available on every window. Older per-screen profile folders are migrated into `shared` on first launch.
 - **Logs** (startup, launch by screen name, save/decrypt failures) go to one file per day named `YYYYDDMM.log` (year, day, month — e.g. `20262210.log` for 2026-10-22) under `log/` next to the binaries (install folder or project root in development). Secrets (decryption keys, ciphertext) and URLs/monitor details are not written. Error dialogs point at today’s log when something fails at login.
-- **Update** (Config, packaged installs only) checks the latest GitLab Release for `GITLAB_PROJECT`, downloads the platform archive, replaces only the binaries (and Linux `icon.png` if present), and restarts Config. `config.json`, `log/`, and browser profiles are left alone.
+- **Update** (Config, packaged installs only) reads `https://download-hengkakada.thecapy.org/latest/version.json`, downloads the platform archive from R2, replaces only the binaries (and Linux `icon.png` if present), and restarts Config. `config.json`, `log/`, and browser profiles are left alone.
 
 If `config.json` is missing, the launcher asks you to run Config first.
 
