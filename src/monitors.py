@@ -51,6 +51,11 @@ def list_monitors() -> list[Monitor]:
     hypr = _from_hyprland()
     if hypr:
         return hypr
+    try:
+        from windows_placer import enable_dpi_awareness
+        enable_dpi_awareness()
+    except Exception:
+        pass
     found = get_monitors()
     monitors: list[Monitor] = []
     for index, item in enumerate(found):

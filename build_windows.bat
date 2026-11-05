@@ -11,7 +11,7 @@ if exist dist\browser-tool-config.exe del dist\browser-tool-config.exe
 if exist dist\browser-tool.exe del dist\browser-tool.exe
 if exist dist\browser-tool-setup.exe del dist\browser-tool-setup.exe
 if exist dist\payload rmdir /s /q dist\payload
-set CRYPTO_HIDDENS=--hidden-import cryptography --hidden-import cryptography.fernet --hidden-import keyring --hidden-import keyring.backends --hidden-import keyring.backends.Windows --hidden-import keyring.backends.chainer --hidden-import keyring.backends.fail --hidden-import secure_store --hidden-import version --hidden-import updater
+set CRYPTO_HIDDENS=--hidden-import cryptography --hidden-import cryptography.fernet --hidden-import keyring --hidden-import keyring.backends --hidden-import keyring.backends.Windows --hidden-import keyring.backends.chainer --hidden-import keyring.backends.fail --hidden-import secure_store --hidden-import version --hidden-import updater --hidden-import windows_placer
 %PYTHON% -m PyInstaller --noconfirm --clean --onefile --windowed --name browser-tool-config --icon assets\icon.ico --paths src --collect-all screeninfo --hidden-import tkinter %CRYPTO_HIDDENS% src\config_app.py
 %PYTHON% -m PyInstaller --noconfirm --clean --onefile --windowed --name browser-tool --icon assets\icon.ico --paths src --collect-all screeninfo --hidden-import tkinter %CRYPTO_HIDDENS% src\launcher_app.py
 mkdir dist\payload

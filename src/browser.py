@@ -204,13 +204,14 @@ def _window_launch_args(
     monitor: Monitor,
     window_mode: str,
     place_with_hyprland: bool,
+    place_with_windows: bool = False,
+    has_child_tabs: bool = False,
 ) -> list[str]:
     profile.mkdir(parents=True, exist_ok=True)
     args = [
         str(binary),
         f"--user-data-dir={profile}",
         f"--class=pos-{role}",
-        "--new-window",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-session-crashed-bubble",
@@ -219,27 +220,50 @@ def _window_launch_args(
         "--disable-features=Translate,TranslateUI",
     ]
     if place_with_hyprland:
-        args.extend(["--ozone-platform=wayland", "--ozone-platform-hint=wayland"])
+        args.extend(["--new-window", "--ozone-platform=wayland", "--ozone-platform-hint=wayland"])
+        if window_mode == "fullscreen":
+            args.append("--kiosk")
+        else:
+            args.append("--start-maximized")
+        args.append(url)
+    elif place_with_windows:
+        args.extend(
+            [
+                f"--window-position={monitor.x},{monitor.y}",
+                f"--window-size={monitor.width},{monitor.height}",
+            ]
+        )
+        if window_mode == "fullscreen" and not has_child_tabs:
+            args.append(f"--app={url}")
+        else:
+            args.extend(["--new-window", url])
     elif sys.platform.startswith("linux") and _is_wayland():
         args.extend(
             [
+                "--new-window",
                 "--ozone-platform-hint=auto",
                 f"--window-position={monitor.x},{monitor.y}",
                 f"--window-size={monitor.width},{monitor.height}",
             ]
         )
+        if window_mode == "fullscreen":
+            args.append("--kiosk")
+        else:
+            args.append("--start-maximized")
+        args.append(url)
     else:
         args.extend(
             [
+                "--new-window",
                 f"--window-position={monitor.x},{monitor.y}",
                 f"--window-size={monitor.width},{monitor.height}",
             ]
         )
-    if window_mode == "fullscreen":
-        args.append("--kiosk")
-    else:
-        args.append("--start-maximized")
-    args.append(url)
+        if window_mode == "fullscreen":
+            args.append("--kiosk")
+        else:
+            args.append("--start-maximized")
+        args.append(url)
     return args
 
 
@@ -275,6 +299,7 @@ def launch_role(
     *,
     open_as: str = "window",
     parent_address: str | None = None,
+    has_child_tabs: bool = False,
 ) -> tuple[subprocess.Popen, str | None]:
     """Launch a screen as a new window or a tab.
 
@@ -287,6 +312,7 @@ def launch_role(
     binary = find_browser(cfg.browser)
     profile = ensure_shared_profile()
     hypr = _use_hyprland()
+    win = sys.platform == "win32"
     mode = open_as if open_as in ALLOWED_OPEN_AS else "window"
 
     if mode == "tab":
@@ -303,13 +329,32 @@ def launch_role(
 
     log.info("Launching screen %s as window (shared profile)", role)
     before_addresses: set[str] = set()
+    before_hwnds: set[int] = set()
     if hypr and monitor.name:
         import hyprland
 
         before_addresses = hyprland.client_addresses()
         hyprland.focus_monitor(monitor.name)
         time.sleep(0.15)
-    args = _window_launch_args(binary, url, profile, role, monitor, window_mode, hypr)
+    elif win:
+        try:
+            import windows_placer
+
+            before_hwnds = windows_placer.get_browser_window_handles()
+        except Exception as exc:
+            log.warning("Could not query initial Windows HWNDs: %s", exc)
+
+    args = _window_launch_args(
+        binary,
+        url,
+        profile,
+        role,
+        monitor,
+        window_mode,
+        place_with_hyprland=hypr,
+        place_with_windows=win,
+        has_child_tabs=has_child_tabs,
+    )
     proc = subprocess.Popen(args, close_fds=True)
     address: str | None = None
     if hypr and monitor.name:
@@ -333,6 +378,18 @@ def launch_role(
         window_pid = int(client.get("pid") or proc.pid)
         address = str(client.get("address") or "") or None
         log.info("Placed %s (pid=%s address=%s)", role, window_pid, address or "?")
+    elif win:
+        try:
+            import windows_placer
+
+            hwnd = windows_placer.wait_for_new_window(before_hwnds, pid=proc.pid)
+            if hwnd:
+                windows_placer.place_window(hwnd, monitor, window_mode)
+                log.info("Placed %s on Monitor %d (hwnd=0x%X)", role, monitor.index, hwnd)
+            else:
+                log.warning("Could not detect new window handle for %s (pid=%s)", role, proc.pid)
+        except Exception as exc:
+            log.error("Failed to place window on Windows: %s", exc)
     else:
         log.info("Started %s (pid=%s)", role, proc.pid)
     return proc, address
@@ -345,6 +402,7 @@ def launch_screens(cfg: AppConfig) -> None:
         raise RuntimeError("\n".join(errors))
     binary = find_browser(cfg.browser)
     screens = [screen for screen in cfg.screens if screen.enabled]
+    monitors_with_tabs = {screen.monitor for screen in screens if screen.open_as == "tab"}
     names = ", ".join(
         (screen.name.strip() or f"screen-{index}")
         for index, screen in enumerate(screens, start=1)
@@ -387,6 +445,7 @@ def launch_screens(cfg: AppConfig) -> None:
             screen.window_mode,
             open_as=open_as,
             parent_address=parent,
+            has_child_tabs=(screen.monitor in monitors_with_tabs),
         )
         if open_as == "window":
             parent_by_monitor[screen.monitor] = address

@@ -29,6 +29,11 @@ def _show_error(message: str) -> None:
 
 
 def main() -> int:
+    try:
+        from windows_placer import enable_dpi_awareness
+        enable_dpi_awareness()
+    except Exception:
+        pass
     log = setup_logging("launcher")
     log.info("Launcher starting")
     path = config_path()

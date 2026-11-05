@@ -623,6 +623,11 @@ class ConfigApp(tk.Tk):
 
 
 def main() -> int:
+    try:
+        from windows_placer import enable_dpi_awareness
+        enable_dpi_awareness()
+    except Exception:
+        pass
     log = setup_logging("config")
     log.info("Config app starting")
     app = ConfigApp()
