@@ -161,12 +161,12 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
         return
     log = get_logger()
 
-    # Restore window first to clear any initial maximized state
+    # Restore window first to clear any initial minimized state
     user32.ShowWindow(hwnd, SW_RESTORE)
     time.sleep(0.08)
 
-    if window_mode == "fullscreen":
-        # Borderless fullscreen kiosk covering the target monitor coordinates
+    if window_mode == "kiosk":
+        # True borderless kiosk mode (no title bar, no window controls)
         style = _get_window_long(hwnd, GWL_STYLE)
         style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
         _set_window_long(hwnd, GWL_STYLE, style)
@@ -181,7 +181,6 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
             SWP_FRAMECHANGED | SWP_SHOWWINDOW,
         )
         time.sleep(0.05)
-        # Apply once more so Windows completes the borderless layout pass
         user32.SetWindowPos(
             hwnd,
             HWND_TOP,
@@ -192,7 +191,13 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
             SWP_FRAMECHANGED | SWP_SHOWWINDOW,
         )
     else:
-        # Move window within the target monitor bounds, then maximize onto it
+        # "fullscreen" (full screen on window) and "maximized":
+        # Display full screen on window with the title bar, close, and minimize buttons.
+        style = _get_window_long(hwnd, GWL_STYLE)
+        style |= (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
+        _set_window_long(hwnd, GWL_STYLE, style)
+
+        # Move window within the target monitor bounds first
         user32.SetWindowPos(
             hwnd,
             HWND_TOP,
@@ -200,9 +205,12 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
             int(monitor.y),
             int(monitor.width),
             int(monitor.height),
-            SWP_SHOWWINDOW,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW,
         )
         time.sleep(0.08)
+
+        # Maximize the window onto that monitor — covers full screen of the monitor
+        # while keeping the close, maximize, and minimize buttons visible.
         user32.ShowWindow(hwnd, SW_MAXIMIZE)
 
     try:
