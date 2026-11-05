@@ -233,7 +233,9 @@ def _window_launch_args(
                 f"--window-size={monitor.width},{monitor.height}",
             ]
         )
-        if not has_child_tabs:
+        if window_mode == "fullscreen":
+            args.extend([f"--app={url}", "--start-fullscreen"])
+        elif not has_child_tabs:
             args.append(f"--app={url}")
         else:
             args.extend(["--new-window", url])

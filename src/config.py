@@ -15,7 +15,7 @@ from secure_store import (
 )
 
 ALLOWED_BROWSERS = ("edge", "chrome", "brave")
-ALLOWED_WINDOW_MODES = ("fullscreen", "maximized", "kiosk")
+ALLOWED_WINDOW_MODES = ("fullscreen", "maximized")
 ALLOWED_OPEN_AS = ("window", "tab")
 DEFAULT_OPEN_DELAY_SECONDS = 0.4
 MAX_OPEN_DELAY_SECONDS = 120.0
@@ -77,7 +77,7 @@ class AppConfig:
             if screen.monitor < 0:
                 errors.append(f"{label}: monitor must be 0 or greater.")
             if screen.window_mode not in ALLOWED_WINDOW_MODES:
-                errors.append(f"{label}: window mode must be Fullscreen, Maximized, or Kiosk.")
+                errors.append(f"{label}: window mode must be Fullscreen or Maximized.")
             if not screen.enabled:
                 continue
             open_as = screen.open_as if screen.open_as in ALLOWED_OPEN_AS else "window"

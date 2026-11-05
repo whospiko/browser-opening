@@ -216,7 +216,7 @@ def place_window(
     window_mode: str = "fullscreen",
 ) -> None:
     selector = _window_selector(client_or_pid)
-    maximize = window_mode != "kiosk"
+    maximize = window_mode == "maximized"
     # Hyprland: 1 = maximized (keeps decorations), 2 = true fullscreen.
     # Client 0 keeps Chromium's title bar (close / minimize) in maximized mode.
     internal = 1 if maximize else 2

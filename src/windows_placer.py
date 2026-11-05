@@ -165,8 +165,8 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
     user32.ShowWindow(hwnd, SW_RESTORE)
     time.sleep(0.08)
 
-    if window_mode == "kiosk":
-        # True borderless kiosk mode (no title bar, no window controls)
+    if window_mode == "fullscreen":
+        # True borderless fullscreen (kiosk) - NO title bar, NO minimize/close buttons
         style = _get_window_long(hwnd, GWL_STYLE)
         style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
         _set_window_long(hwnd, GWL_STYLE, style)
@@ -191,8 +191,7 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
             SWP_FRAMECHANGED | SWP_SHOWWINDOW,
         )
     else:
-        # "fullscreen" (full screen on window) and "maximized":
-        # Display full screen on window with the title bar, close, and minimize buttons.
+        # "maximized": fills the screen but keeps the title bar with close and minimize buttons
         style = _get_window_long(hwnd, GWL_STYLE)
         style |= (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU)
         _set_window_long(hwnd, GWL_STYLE, style)
@@ -209,8 +208,7 @@ def place_window(hwnd: int, monitor: Monitor, window_mode: str = "fullscreen") -
         )
         time.sleep(0.08)
 
-        # Maximize the window onto that monitor — covers full screen of the monitor
-        # while keeping the close, maximize, and minimize buttons visible.
+        # Maximize the window onto that monitor
         user32.ShowWindow(hwnd, SW_MAXIMIZE)
 
     try:
